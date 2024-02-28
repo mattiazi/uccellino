@@ -1,12 +1,13 @@
 /*
 Copyright © 2024 Mattia Zignale
-
 */
 package cmd
 
 import (
 	"fmt"
 	"os"
+
+	"uccellino/cmd/recon"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -17,13 +18,11 @@ var cfgFile string
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "uccellino",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Short: "uccellino is a software that works with Crowdstrike APIs",
+	Long: `uccellino is a software that works with Crowstrike APIs.
+	Could be built in a single exe and is portable (thanks to Go capabilities).
+	
+	Disclaimer: uccellino is not a Crowdstrike official software!`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
@@ -49,7 +48,10 @@ func init() {
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+
+	//add sub commands
+	rootCmd.AddCommand(recon.ReconCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.
