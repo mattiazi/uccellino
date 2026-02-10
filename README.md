@@ -1,3 +1,3 @@
 # uccellino
 
-This repository aims to port CrowdStrike API in a Go tool
+uccellino is a tool/automation layer for CrowdStrike Falcon
