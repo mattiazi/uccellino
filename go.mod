@@ -1,4 +1,4 @@
-module github.com/mattiazi/uccellino/pkg/falconwrap
+module github.com/mattiazi/uccellino
 
 go 1.25.7
 
