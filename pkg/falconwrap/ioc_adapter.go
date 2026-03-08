@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 
+	"github.com/crowdstrike/gofalcon/falcon"
 	"github.com/crowdstrike/gofalcon/falcon/client"
+	falcon_ioc "github.com/crowdstrike/gofalcon/falcon/client/ioc"
+	"github.com/mattiazi/uccellino/internal/config"
 	"github.com/mattiazi/uccellino/pkg/uccellino/ioc"
 )
 
@@ -18,15 +21,52 @@ func NewIOCAdapter(fc *client.CrowdStrikeAPISpecification) *IOCAdapter {
 	return &IOCAdapter{fc: fc}
 }
 
-func (a *IOCAdapter) List(ctx context.Context, filter string, limit int) ([]ioc.IOC, error) {
-	_ = ctx
-	_ = filter
-	_ = limit
+func (a *IOCAdapter) List(ctx context.Context, filter string) ([]ioc.IOC, error) {
+	iocs := []ioc.IOC{}
+	var limit, offset, total int64
+	limit = 2000
+	offset = 0
+	total = 0
 
-	// TODO: call the correct gofalcon IOC endpoint and map results:
-	// - query/list endpoint (with filter + pagination)
-	// - map SDK models -> ioc.IOC
-	return nil, errors.New("falcon ioc list: not implemented yet")
+	config, err := config.Load()
+	if err != nil {
+		return []ioc.IOC{}, err
+	}
+
+	client, err := NewClient(context.Background(), Config(config.Falcon))
+	if err != nil {
+		return []ioc.IOC{}, err
+	}
+
+	for offset <= total {
+		params := falcon_ioc.NewIndicatorCombinedV1Params().WithDefaults()
+		params.SetOffset(&offset)
+		params.SetLimit(&limit)
+		res, err := client.Ioc.IndicatorCombinedV1(params)
+		if err != nil {
+			return []ioc.IOC{}, err
+		}
+		if err = falcon.AssertNoError(res.GetPayload().Errors); err != nil {
+			return []ioc.IOC{}, err
+		}
+
+		for _, f_ioc := range res.GetPayload().Resources {
+			iocs = append(iocs, ioc.IOC{
+				Type:        f_ioc.Type,
+				Value:       f_ioc.Value,
+				Action:      f_ioc.Action,
+				Severity:    f_ioc.Severity,
+				Description: f_ioc.Description,
+				Tags:        f_ioc.Tags,
+				Platforms:   f_ioc.Platforms,
+			})
+		}
+
+		total = *res.GetPayload().Meta.Pagination.Total
+		offset += limit
+	}
+
+	return iocs, nil
 }
 
 func (a *IOCAdapter) Create(ctx context.Context, in ioc.IOC) (string, error) {

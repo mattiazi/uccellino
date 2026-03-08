@@ -6,30 +6,55 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mattiazi/uccellino/pkg/falconwrap"
+	"github.com/crowdstrike/gofalcon/falcon"
 )
 
 type Config struct {
-	Falcon falconwrap.Config
+	Falcon FalconConfig
+}
+
+type FalconConfig struct {
+	ClientId     string
+	ClientSecret string
+	Cloud        falcon.CloudType
 }
 
 func Load() (Config, error) {
-	config := Config{
-		Falcon: falconwrap.Config{
-			ClientId:     strings.TrimSpace(os.Getenv("CROWDSTRIKE_CLIENT_ID")),
-			ClientSecret: strings.TrimSpace(os.Getenv("CROWDSTRIKE_CLIENT_SECRET")),
-			//TODO: Cloud:        os.Getenv("CROWDSTRIKE_CLOUD"), // optional. Use falcon.CloudType
-		},
+	config, err := LoadRaw()
+	if err != nil {
+		return Config{}, err
 	}
 
-	if err := validate(config); err != nil {
+	if err := Validate(config); err != nil {
 		return Config{}, err
 	}
 
 	return config, nil
 }
 
-func validate(config Config) error {
+func LoadRaw() (Config, error) {
+	cloud := falcon.CloudType(falcon.CloudAutoDiscover)
+	cloudEnv := strings.TrimSpace(os.Getenv("CROWDSTRIKE_CLOUD"))
+	if cloudEnv != "" {
+		parsedCloud, err := falcon.CloudValidate(cloudEnv)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid CROWDSTRIKE_CLOUD value: %w", err)
+		}
+		cloud = parsedCloud
+	}
+
+	config := Config{
+		Falcon: FalconConfig{
+			ClientId:     strings.TrimSpace(os.Getenv("CROWDSTRIKE_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("CROWDSTRIKE_CLIENT_SECRET")),
+			Cloud:        cloud,
+		},
+	}
+
+	return config, nil
+}
+
+func Validate(config Config) error {
 	var missing []string
 
 	if config.Falcon.ClientId == "" {
@@ -42,8 +67,6 @@ func validate(config Config) error {
 	if len(missing) > 0 {
 		return errors.New("missing required env vars: " + strings.Join(missing, ", "))
 	}
-
-	// TODO: validate cloud value if provided
 
 	return nil
 }
