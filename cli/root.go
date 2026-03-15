@@ -122,6 +122,15 @@ func newIOCCmd(state *rootState) *cobra.Command {
 	iocCmd := &cobra.Command{
 		Use:   "ioc",
 		Short: "Manage indicators of compromise",
+		Long: strings.TrimSpace(`
+Manage CrowdStrike custom indicators of compromise.
+
+Common options:
+  type: domain, ipv4, ipv6, md5, sha256
+  action: no_action, detect, prevent, allow, prevent_no_ui
+  severity: informational, low, medium, high, critical
+  platform: windows, mac, linux
+`),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
@@ -137,7 +146,13 @@ func newIOCCmd(state *rootState) *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List indicators of compromise",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+List CrowdStrike custom indicators of compromise.
+
+Options:
+  filter: Falcon Query Language (FQL) expression, for example value:'example.org'
+`),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// if listLimit <= 0 {
 			// 	return errors.New("limit must be greater than 0")
@@ -157,9 +172,22 @@ func newIOCCmd(state *rootState) *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create an indicator of compromise",
-		Args:  cobra.NoArgs,
+		Long: strings.TrimSpace(`
+Create a CrowdStrike custom indicator of compromise.
+
+Options:
+  type: domain, ipv4, ipv6, md5, sha256
+  action: no_action, detect, prevent, allow, prevent_no_ui
+  severity: informational, low, medium, high, critical
+  platform: windows, mac, linux
+
+Notes:
+  domain/ipv4/ipv6 usually support detect or no_action
+  md5/sha256 can use prevent
+`),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			id, err := state.iocAPI.Create(cmd.Context(), iocdomain.IOC{
+			input := iocdomain.IOC{
 				Type:        createType,
 				Value:       createValue,
 				Action:      createAction,
@@ -167,7 +195,12 @@ func newIOCCmd(state *rootState) *cobra.Command {
 				Description: createDescription,
 				Tags:        createTags,
 				Platforms:   createPlatforms,
-			})
+			}
+			if err := iocdomain.ValidateCreate(input); err != nil {
+				return err
+			}
+
+			id, err := state.iocAPI.Create(cmd.Context(), input)
 			if err != nil {
 				return err
 			}
@@ -178,19 +211,25 @@ func newIOCCmd(state *rootState) *cobra.Command {
 			})
 		},
 	}
-	createCmd.Flags().StringVar(&createType, "type", "", "IOC type")
+	createCmd.Flags().StringVar(&createType, "type", "", "IOC type. Options: domain, ipv4, ipv6, md5, sha256")
 	createCmd.Flags().StringVar(&createValue, "value", "", "IOC value")
-	createCmd.Flags().StringVar(&createAction, "action", "", "IOC action")
-	createCmd.Flags().StringVar(&createSeverity, "severity", "", "IOC severity")
+	createCmd.Flags().StringVar(&createAction, "action", "", "IOC action. Options: no_action, detect, prevent, allow, prevent_no_ui")
+	createCmd.Flags().StringVar(&createSeverity, "severity", "", "IOC severity. Options: informational, low, medium, high, critical")
 	createCmd.Flags().StringVar(&createDescription, "description", "", "IOC description")
 	createCmd.Flags().StringSliceVar(&createTags, "tags", nil, "Comma-separated IOC tags")
-	createCmd.Flags().StringSliceVar(&createPlatforms, "platforms", nil, "Comma-separated IOC platforms")
+	createCmd.Flags().StringSliceVar(&createPlatforms, "platform", nil, "Comma-separated IOC platforms. Options: windows, mac, linux")
 	markFlagRequired(createCmd, "type", "value", "action")
 
 	deleteCmd := &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete an indicator of compromise",
-		Args:  cobra.ExactArgs(1),
+		Long: strings.TrimSpace(`
+Delete a CrowdStrike custom indicator of compromise.
+
+Options:
+  id: CrowdStrike IOC ID returned by create or visible via list/get APIs
+`),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(args[0])
 			if id == "" {
@@ -294,7 +333,7 @@ func writeIOCList(w io.Writer, mode string, indicators []iocdomain.IOC) error {
 		for _, indicator := range indicators {
 			if _, err := fmt.Fprintf(
 				w,
-				"type=%s value=%s action=%s severity=%d description=%q tags=%s platforms=%s\n",
+				"type=%s value=%s action=%s severity=%s description=%q tags=%s platforms=%s\n",
 				indicator.Type,
 				indicator.Value,
 				indicator.Action,

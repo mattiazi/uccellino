@@ -7,6 +7,7 @@ import (
 	"github.com/crowdstrike/gofalcon/falcon"
 	"github.com/crowdstrike/gofalcon/falcon/client"
 	falcon_ioc "github.com/crowdstrike/gofalcon/falcon/client/ioc"
+	"github.com/crowdstrike/gofalcon/falcon/models"
 	"github.com/mattiazi/uccellino/internal/config"
 	"github.com/mattiazi/uccellino/pkg/uccellino/ioc"
 )
@@ -70,18 +71,72 @@ func (a *IOCAdapter) List(ctx context.Context, filter string) ([]ioc.IOC, error)
 }
 
 func (a *IOCAdapter) Create(ctx context.Context, in ioc.IOC) (string, error) {
-	_ = ctx
-	_ = in
+	if a.fc == nil {
+		return "", errors.New("falcon ioc create: client is nil")
+	}
+	if err := ioc.ValidateCreate(in); err != nil {
+		return "", err
+	}
 
-	// TODO: call create/upsert endpoint and return created IOC ID.
-	// - map ioc.IOC -> SDK request model
-	return "", errors.New("falcon ioc create: not implemented yet")
+	appliedGlobally := true
+	params := falcon_ioc.NewIndicatorCreateV1Params().
+		WithContext(ctx).
+		WithDefaults().
+		WithBody(&models.APIIndicatorCreateReqsV1{
+			Indicators: []*models.APIIndicatorCreateReqV1{
+				{
+					AppliedGlobally: &appliedGlobally,
+					Type:            in.Type,
+					Value:           in.Value,
+					Action:          in.Action,
+					Severity:        in.Severity,
+					Description:     in.Description,
+					Tags:            append([]string(nil), in.Tags...),
+					Platforms:       append([]string(nil), in.Platforms...),
+				},
+			},
+		})
+
+	res, err := a.fc.Ioc.IndicatorCreateV1(params)
+	if err != nil {
+		return "", err
+	}
+
+	payload := res.GetPayload()
+	if payload == nil {
+		return "", errors.New("falcon ioc create: empty response payload")
+	}
+	if err := falcon.AssertNoError(payload.Errors); err != nil {
+		return "", err
+	}
+	if len(payload.Resources) == 0 || payload.Resources[0] == nil {
+		return "", errors.New("falcon ioc create: no created IOC returned")
+	}
+	if payload.Resources[0].ID == "" {
+		return "", errors.New("falcon ioc create: created IOC ID missing from response")
+	}
+
+	return payload.Resources[0].ID, nil
 }
 
 func (a *IOCAdapter) Delete(ctx context.Context, id string) error {
-	_ = ctx
-	_ = id
+	if a.fc == nil {
+		return errors.New("falcon ioc delete: client is nil")
+	}
 
-	// TODO: call delete endpoint.
-	return errors.New("falcon ioc delete: not implemented yet")
+	params := falcon_ioc.NewIndicatorDeleteV1Params().
+		WithContext(ctx).
+		WithIds([]string{id})
+
+	res, err := a.fc.Ioc.IndicatorDeleteV1(params)
+	if err != nil {
+		return err
+	}
+
+	payload := res.GetPayload()
+	if payload == nil {
+		return errors.New("falcon ioc delete: empty response payload")
+	}
+
+	return falcon.AssertNoError(payload.Errors)
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,16 +16,16 @@ import (
 )
 
 type fakeIOCAPI struct {
-	listFn   func(ctx context.Context, filter string, limit int) ([]iocdomain.IOC, error)
+	listFn   func(ctx context.Context, filter string) ([]iocdomain.IOC, error)
 	createFn func(ctx context.Context, in iocdomain.IOC) (string, error)
 	deleteFn func(ctx context.Context, id string) error
 }
 
-func (f *fakeIOCAPI) List(ctx context.Context, filter string, limit int) ([]iocdomain.IOC, error) {
+func (f *fakeIOCAPI) List(ctx context.Context, filter string) ([]iocdomain.IOC, error) {
 	if f.listFn == nil {
 		return nil, nil
 	}
-	return f.listFn(ctx, filter, limit)
+	return f.listFn(ctx, filter)
 }
 
 func (f *fakeIOCAPI) Create(ctx context.Context, in iocdomain.IOC) (string, error) {
@@ -53,11 +54,22 @@ func TestRootHelpDoesNotRequireCredentials(t *testing.T) {
 
 func TestIOCHelpDoesNotRequireCredentials(t *testing.T) {
 	clearFalconEnv(t)
-	cmd, _, _ := newTestRootCmd(nil)
+	cmd, out, _ := newTestRootCmd(nil)
 	cmd.SetArgs([]string{"ioc", "--help"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("expected ioc help to succeed, got error: %v", err)
+	}
+	help := out.String()
+	for _, snippet := range []string{
+		"type: domain, ipv4, ipv6, md5, sha256",
+		"action: no_action, detect, prevent, allow, prevent_no_ui",
+		"severity: informational, low, medium, high, critical",
+		"platform: windows, mac, linux",
+	} {
+		if !strings.Contains(help, snippet) {
+			t.Fatalf("expected ioc help to contain %q, got:\n%s", snippet, help)
+		}
 	}
 }
 
@@ -175,6 +187,66 @@ func TestCreateRequiresFlags(t *testing.T) {
 	}
 }
 
+func TestCreateHelpListsSupportedOptions(t *testing.T) {
+	clearFalconEnv(t)
+	cmd, out, _ := newTestRootCmd(nil)
+	cmd.SetArgs([]string{"ioc", "create", "--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected create help to succeed, got error: %v", err)
+	}
+
+	help := out.String()
+	for _, snippet := range []string{
+		"Options:",
+		"type: domain, ipv4, ipv6, md5, sha256",
+		"action: no_action, detect, prevent, allow, prevent_no_ui",
+		"severity: informational, low, medium, high, critical",
+		"platform: windows, mac, linux",
+		"--type string",
+		"--action string",
+		"--severity string",
+		"--platform strings",
+	} {
+		if !strings.Contains(help, snippet) {
+			t.Fatalf("expected create help to contain %q, got:\n%s", snippet, help)
+		}
+	}
+}
+
+func TestCreateRejectsUnsupportedActionForDomain(t *testing.T) {
+	clearFalconEnv(t)
+	createCalled := false
+	cmd, _, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
+		return &fakeIOCAPI{
+			createFn: func(ctx context.Context, in iocdomain.IOC) (string, error) {
+				createCalled = true
+				return "ioc-123", nil
+			},
+		}, nil
+	})
+	cmd.SetArgs([]string{
+		"--client-id", "id",
+		"--client-secret", "secret",
+		"ioc", "create",
+		"--type", "domain",
+		"--value", "test.mattiazignale.it",
+		"--action", "prevent",
+		"--platform", "mac",
+	})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), `action "prevent" is not supported for IOC type "domain"`) {
+		t.Fatalf("expected unsupported action error, got: %v", err)
+	}
+	if createCalled {
+		t.Fatal("expected Create not to be called for an invalid type/action combination")
+	}
+}
+
 func TestDeleteRequiresID(t *testing.T) {
 	clearFalconEnv(t)
 	cmd, _, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
@@ -195,33 +267,12 @@ func TestDeleteRequiresID(t *testing.T) {
 	}
 }
 
-func TestListRejectsZeroLimit(t *testing.T) {
-	clearFalconEnv(t)
-	cmd, _, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
-		return &fakeIOCAPI{}, nil
-	})
-	cmd.SetArgs([]string{
-		"--client-id", "id",
-		"--client-secret", "secret",
-		"ioc", "list",
-		"--limit", "0",
-	})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected an error, got nil")
-	}
-	if !strings.Contains(err.Error(), "limit must be greater than 0") {
-		t.Fatalf("expected limit validation error, got: %v", err)
-	}
-}
-
 func TestAdapterErrorsBubbleUp(t *testing.T) {
 	clearFalconEnv(t)
-	wantErr := errors.New("falcon ioc list: not implemented yet")
+	wantErr := errors.New("boom")
 	cmd, _, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
 		return &fakeIOCAPI{
-			listFn: func(ctx context.Context, filter string, limit int) ([]iocdomain.IOC, error) {
+			listFn: func(ctx context.Context, filter string) ([]iocdomain.IOC, error) {
 				return nil, wantErr
 			},
 		}, nil
@@ -245,13 +296,16 @@ func TestListTextOutput(t *testing.T) {
 	clearFalconEnv(t)
 	cmd, out, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
 		return &fakeIOCAPI{
-			listFn: func(ctx context.Context, filter string, limit int) ([]iocdomain.IOC, error) {
+			listFn: func(ctx context.Context, filter string) ([]iocdomain.IOC, error) {
+				if filter != "" {
+					t.Fatalf("expected empty filter, got %q", filter)
+				}
 				return []iocdomain.IOC{
 					{
 						Type:        "ip",
 						Value:       "1.2.3.4",
 						Action:      "detect",
-						Severity:    3,
+						Severity:    "medium",
 						Description: "test indicator",
 						Tags:        []string{"malware", "feed"},
 						Platforms:   []string{"windows", "mac"},
@@ -271,7 +325,7 @@ func TestListTextOutput(t *testing.T) {
 	}
 
 	got := out.String()
-	want := "type=ip value=1.2.3.4 action=detect severity=3 description=\"test indicator\" tags=malware,feed platforms=windows,mac\n"
+	want := "type=ip value=1.2.3.4 action=detect severity=medium description=\"test indicator\" tags=malware,feed platforms=windows,mac\n"
 	if got != want {
 		t.Fatalf("unexpected text output:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -281,13 +335,13 @@ func TestListJSONOutput(t *testing.T) {
 	clearFalconEnv(t)
 	cmd, out, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
 		return &fakeIOCAPI{
-			listFn: func(ctx context.Context, filter string, limit int) ([]iocdomain.IOC, error) {
+			listFn: func(ctx context.Context, filter string) ([]iocdomain.IOC, error) {
 				return []iocdomain.IOC{
 					{
 						Type:     "domain",
 						Value:    "example.org",
 						Action:   "prevent",
-						Severity: 4,
+						Severity: "high",
 					},
 				}, nil
 			},
@@ -309,16 +363,18 @@ func TestListJSONOutput(t *testing.T) {
 		t.Fatalf("failed to decode json output: %v", err)
 	}
 
-	if len(got) != 1 || got[0].Value != "example.org" || got[0].Action != "prevent" {
+	if len(got) != 1 || got[0].Value != "example.org" || got[0].Action != "prevent" || got[0].Severity != "high" {
 		t.Fatalf("unexpected list json output: %#v", got)
 	}
 }
 
-func TestCreateTextOutput(t *testing.T) {
+func TestCreateCommandWiresFlagsToAPI(t *testing.T) {
 	clearFalconEnv(t)
+	var gotIOC iocdomain.IOC
 	cmd, out, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
 		return &fakeIOCAPI{
 			createFn: func(ctx context.Context, in iocdomain.IOC) (string, error) {
+				gotIOC = in
 				return "ioc-123", nil
 			},
 		}, nil
@@ -330,22 +386,40 @@ func TestCreateTextOutput(t *testing.T) {
 		"--type", "ip",
 		"--value", "1.2.3.4",
 		"--action", "detect",
+		"--severity", "medium",
+		"--description", "test indicator",
+		"--tags", "tag-a,tag-b",
+		"--platform", "windows,linux",
 	})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("expected command to succeed, got error: %v", err)
 	}
 
+	wantIOC := iocdomain.IOC{
+		Type:        "ip",
+		Value:       "1.2.3.4",
+		Action:      "detect",
+		Severity:    "medium",
+		Description: "test indicator",
+		Tags:        []string{"tag-a", "tag-b"},
+		Platforms:   []string{"windows", "linux"},
+	}
+	if !reflect.DeepEqual(gotIOC, wantIOC) {
+		t.Fatalf("unexpected IOC passed to Create:\nwant: %#v\ngot:  %#v", wantIOC, gotIOC)
+	}
 	if got, want := out.String(), "created ioc: ioc-123\n"; got != want {
 		t.Fatalf("unexpected create output:\nwant: %q\ngot:  %q", want, got)
 	}
 }
 
-func TestDeleteJSONOutput(t *testing.T) {
+func TestDeleteCommandWiresIDToAPI(t *testing.T) {
 	clearFalconEnv(t)
+	var gotID string
 	cmd, out, _ := newTestRootCmd(func(ctx context.Context, cfg config.Config) (iocdomain.IOCsAPI, error) {
 		return &fakeIOCAPI{
 			deleteFn: func(ctx context.Context, id string) error {
+				gotID = id
 				return nil
 			},
 		}, nil
@@ -359,6 +433,10 @@ func TestDeleteJSONOutput(t *testing.T) {
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("expected command to succeed, got error: %v", err)
+	}
+
+	if gotID != "ioc-999" {
+		t.Fatalf("unexpected ID passed to Delete: %q", gotID)
 	}
 
 	var got statusResponse
